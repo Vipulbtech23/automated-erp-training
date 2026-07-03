@@ -1,0 +1,149 @@
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600;700&display=swap');
+
+html, body, [class*="css"]{
+    font-family:Poppins;
+}
+
+.stApp{
+background:linear-gradient(135deg,#0f172a,#1e293b,#111827);
+color:white;
+}
+
+/* Sidebar */
+
+section[data-testid="stSidebar"]{
+background:#6986c5;
+border-right:1px solid rgba(255,255,255,.1);
+}
+
+/* Glass Card */
+
+.glass{
+
+background:rgba(255,255,255,.08);
+
+backdrop-filter:blur(18px);
+
+border-radius:25px;
+
+padding:20px;
+
+border:1px solid rgba(255,255,255,.15);
+
+box-shadow:0 8px 30px rgba(0,0,0,.3);
+
+margin-bottom:20px;
+
+}
+
+/* Metrics */
+
+.metric{
+
+background:rgba(255,255,255,.05);
+
+padding:20px;
+
+border-radius:18px;
+
+text-align:center;
+
+transition:.3s;
+
+}
+
+.metric:hover{
+
+transform:translateY(-5px);
+
+background:#2563eb;
+
+}
+
+/* Buttons */
+
+.stButton>button{
+
+width:100%;
+
+border-radius:12px;
+
+background:#2563eb;
+
+color:white;
+
+height:48px;
+
+font-size:16px;
+
+border:none;
+
+}
+
+.stButton>button:hover{
+
+background:#1d4ed8;
+
+}
+
+/* Avatar */
+
+.avatar{
+
+width:120px;
+
+height:120px;
+
+border-radius:50%;
+
+border:5px solid white;
+
+display:block;
+
+margin:auto;
+
+}
+
+/* Progress */
+
+.progress{
+
+height:16px;
+
+background:#334155;
+
+border-radius:20px;
+
+overflow:hidden;
+
+}
+
+.progress-bar{
+
+height:16px;
+
+background:#22c55e;
+
+}
+
+/* Title */
+
+.title{
+
+font-size:36px;
+
+font-weight:700;
+
+color:white;
+
+}
+
+/* Subtitle */
+
+.subtitle{
+
+color:#cbd5e1;
+
+font-size:18px;
+
+}
