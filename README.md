@@ -1,3 +1,4 @@
+
 # 🏫 Training Performance System — Smart Academic Analytics & Automation Platform
 
 A Python-based Training Performance System built with Streamlit that automates student result analysis, gradecard generation, rankings, certificates, and email delivery. It provides interactive dashboards with analytics, percentile distribution, and downloadable reports for efficient academic performance tracking.

@@ -4,13 +4,21 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import os
+import sys
 import datetime
+from pathlib import Path
+from quiz.notifications import student_notification_panel
 import firebase_admin
 from firebase_admin import credentials, firestore
 from streamlit_qrcode_scanner import qrcode_scanner
-from pathlib import Path
-from google import genai
+from quiz.academic_journey import academic_journey_panel
+from quiz.gamification import gamification_panel
 BASE_DIR = Path(__file__).resolve().parent.parent
+ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+sys.path.append(ROOT_DIR)
+
+from quiz.quiz_student import quiz_student_panel
+from quiz.ai_quiz_analysis import build_student_quiz_context
 
 # ================= CONFIG =================
 st.set_page_config(
@@ -18,28 +26,46 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
-# ================= GEMINI AI =================
-# ================= GEMINI AI =================
+
+# ================= GEMINI =================
 def init_gemini():
     try:
-        return genai.Client(api_key=st.secrets["gemini"]["api_key"])
+        api_key = st.secrets["gemini"]["api_key"]
+        return genai.Client(api_key=api_key)
     except Exception as e:
         st.sidebar.warning("Gemini key not configured")
         return None
 
 gemini_client = init_gemini()
+
 # ================= FIREBASE =================
 def init_firebase():
     if not firebase_admin._apps:
+        try:
+            firebase_config = dict(st.secrets["firebase"])
+            cred = credentials.Certificate(firebase_config)
+        except Exception as e:
+            st.error("Firebase secrets not configured in Streamlit Cloud.")
+            st.code(str(e))
+            st.stop()
 
-        cred = credentials.Certificate(BASE_DIR / "firebase_key.json")
         firebase_admin.initialize_app(cred)
+
     return firestore.client()
 
 db = init_firebase()
 
+# ================= HELPERS =================
 def safe_id(value):
     return str(value).replace("@", "_at_").replace(".", "_").replace("/", "_")
+
+def get_gradecard(name):
+    safe = name.strip().replace(" ", "_")
+    return f"output/gradecards/{safe}_gradecard.pdf"
+
+def get_certificate(name):
+    safe = name.strip().replace(" ", "_")
+    return f"output/certificates/{safe}_certificate.pdf"
 
 @firestore.transactional
 def punch_attendance(transaction, session_ref, record_ref, student_data):
@@ -91,13 +117,19 @@ def punch_attendance(transaction, session_ref, record_ref, student_data):
     })
 
     return True, "Attendance punched successfully"
-# ================= CSS =================N
-with open("styles/style.css") as f:
-    st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
+
+# ================= CSS =================
+try:
+    with open("styles/style.css") as f:
+        st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
+except:
+    pass
 
 # ================= DATA =================
 df = pd.read_excel("output/final_rankings.xlsx")
 df.columns = df.columns.str.strip()
+df["Email"] = df["Email"].astype(str).str.strip().str.lower()
+df["Name"] = df["Name"].astype(str).str.strip()
 
 # ================= SESSION =================
 if "login" not in st.session_state:
@@ -109,21 +141,22 @@ if "student" not in st.session_state:
 # ================= LOGIN =================
 if not st.session_state.login:
 
-    st.markdown("<h1 style='text-align:center;'>🎓 LIET Student ERP</h1>", unsafe_allow_html=True)
+    st.markdown(
+        "<h1 style='text-align:center;'>🎓 LIET Student ERP</h1>",
+        unsafe_allow_html=True
+    )
 
     email = st.text_input("Email")
     password = st.text_input("Password", type="password")
 
     if st.button("Login"):
 
-        user = df[df["Email"].str.lower() == email.lower()]
+        user = df[df["Email"].str.lower() == email.lower().strip()]
 
         if len(user) > 0 and password == "Lloyd@2025":
-
             st.session_state.login = True
             st.session_state.student = user.iloc[0]
             st.rerun()
-
         else:
             st.error("Invalid Credentials")
 
@@ -133,7 +166,9 @@ if not st.session_state.login:
 student = st.session_state.student
 
 # ================= SIDEBAR =================
-st.sidebar.image("assets/avatar.png", width=130)
+if os.path.exists("assets/avatar.png"):
+    st.sidebar.image("assets/avatar.png", width=130)
+
 st.sidebar.markdown(f"### {student['Name']}")
 st.sidebar.write(student["Email"])
 
@@ -141,26 +176,16 @@ page = st.sidebar.radio(
     "Navigation",
     [
         "🏠 Dashboard",
-        
-        "Downloads",
-        "🤖 AI Assistant",
-        "👤 Profile",
-        "⚙ Settings",
+        "📥 Downloads",
         "📌 Attendance",
-        
-        "🧠 Academic Mentor Agent"
+        "📝 Quiz Center",
+        "🧠 AI Academic Mentor",
+        "📈 Academic Journey",
+        "🏅 Achievements",
+        "⚙ Settings",
+        "🔔 Notifications"
     ]
 )
-
-# ================= FUNCTIONS =================
-def get_gradecard(name):
-    safe = name.strip().replace(" ", "_")
-    return f"output/gradecards/{safe}_gradecard.pdf"
-
-def get_certificate(name):
-    safe = name.strip().replace(" ", "_")
-    return f"output/certificates/{safe}_certificate.pdf"
-
 
 # ================= DASHBOARD =================
 if page == "🏠 Dashboard":
@@ -168,10 +193,6 @@ if page == "🏠 Dashboard":
     st.title("🎓 Student Dashboard")
     st.success(f"Welcome {student['Name']} 👋")
 
-    st.markdown("<div class='title'>Student Dashboard</div>", unsafe_allow_html=True)
-    st.markdown("<div class='subtitle'>Welcome Back</div>", unsafe_allow_html=True)
-
-    # ================= METRICS =================
     c1, c2, c3, c4 = st.columns(4)
 
     c1.metric("Rank", student["Rank"])
@@ -179,11 +200,11 @@ if page == "🏠 Dashboard":
     c3.metric("CGPA", student["CGPA"])
     c4.metric("Attendance", f"{student['Attendance_%']}%")
 
-    # ================= PROFILE =================
     col1, col2 = st.columns([1, 3])
 
     with col1:
-        st.image("assets/avatar.png", width=170)
+        if os.path.exists("assets/avatar.png"):
+            st.image("assets/avatar.png", width=170)
 
     with col2:
         st.markdown(f"""
@@ -196,7 +217,6 @@ if page == "🏠 Dashboard":
         </div>
         """, unsafe_allow_html=True)
 
-    # ================= PROGRESS =================
     st.subheader("📈 Performance")
 
     st.write("Overall Percentage")
@@ -205,98 +225,34 @@ if page == "🏠 Dashboard":
     st.write("Attendance")
     st.progress(int(student["Attendance_%"]))
 
-    cgpa_percent = int((student["CGPA"] / 10) * 100)
+    cgpa_percent = int((float(student["CGPA"]) / 10) * 100)
     st.write("CGPA Progress")
     st.progress(cgpa_percent)
 
-    # ================= PROFILE CARD =================
-    st.subheader("👤 Student Profile")
-
-    left, right = st.columns([1, 3])
-
-    with left:
-        st.image(
-            "https://api.dicebear.com/7.x/initials/png?seed=" + student["Name"],
-            width=140
-        )
-
-    with right:
-        st.write("###", student["Name"])
-        st.write("📧", student["Email"])
-        st.write("🎓 Grade :", student["Grade"])
-        st.write("📊 Rank :", student["Rank"])
-
-    # ================= BAR CHART =================
     fig = go.Figure()
-
     fig.add_trace(go.Bar(
         x=["Attendance", "Percentage", "CGPA"],
         y=[student["Attendance_%"], student["Percentage"], student["CGPA"] * 10]
     ))
-
     fig.update_layout(title="My Performance", height=420)
-
     st.plotly_chart(fig, use_container_width=True)
 
-    # ================= RADAR =================
-    fig2 = go.Figure()
-
-    fig2.add_trace(go.Scatterpolar(
-        r=[
-            student["Attendance_%"],
-            student["Percentage"],
-            student["CGPA"] * 10,
-            student["Percentage"]
-        ],
-        theta=["Attendance", "Percentage", "CGPA", "Performance"],
-        fill="toself"
-    ))
-
-    fig2.update_layout(
-        polar=dict(radialaxis=dict(visible=True, range=[0, 100])),
-        showlegend=False,
-        height=500
-    )
-
-    st.plotly_chart(fig2, use_container_width=True)
-
-    # ================= STATS =================
-    stats1, stats2 = st.columns(2)
-
-    with stats1:
-        st.info(f"""
-        ### Academic
-        Rank : {student['Rank']}
-        Grade : {student['Grade']}
-        CGPA : {student['CGPA']}
-        """)
-
-    with stats2:
-        st.success(f"""
-        ### Training
-        Attendance : {student['Attendance_%']}
-        Percentage : {student['Percentage']}
-        """)
-
-    # ================= MODULE CHART =================
     marks_cols = [c for c in df.columns if "_Marks" in c]
 
-    module_df = pd.DataFrame([
-        {"Module": c.replace("_Marks", ""), "Marks": student[c]}
-        for c in marks_cols
-    ])
+    if marks_cols:
+        module_df = pd.DataFrame([
+            {"Module": c.replace("_Marks", ""), "Marks": student[c]}
+            for c in marks_cols
+        ])
 
-    fig3 = px.bar(module_df, x="Module", y="Marks", title="Module Performance")
+        fig3 = px.bar(module_df, x="Module", y="Marks", title="Module Performance")
+        st.plotly_chart(fig3, use_container_width=True)
 
-    st.plotly_chart(fig3, use_container_width=True)
-
-    # ================= PERCENTILE =================
     total = len(df)
     percentile = round((1 - (student["Rank"] / total)) * 100, 2)
 
     st.success(f"🏆 You are better than **{percentile}%** students")
 
-    # ================= ACHIEVEMENTS =================
     st.subheader("🏅 Achievements")
 
     if student["Rank"] == 1:
@@ -310,9 +266,9 @@ if page == "🏠 Dashboard":
         st.warning("🏅 Participant")
 
 # ================= DOWNLOADS =================
-elif page == "Downloads":
+elif page == "📥 Downloads":
 
-    st.subheader("👤 Student Info")
+    st.title("📥 Download Center")
 
     c1, c2, c3 = st.columns(3)
 
@@ -320,104 +276,37 @@ elif page == "Downloads":
     c2.metric("Grade", student["Grade"])
     c3.metric("Percentage", f"{student['Percentage']}%")
 
-    st.title("📥 Download Center")
-
-    col1, col2 = st.columns(2)
-
     gradecard = get_gradecard(student["Name"])
     certificate = get_certificate(student["Name"])
+
+    col1, col2 = st.columns(2)
 
     with col1:
         if os.path.exists(gradecard):
             with open(gradecard, "rb") as f:
-                st.download_button("📄 Gradecard", f, file_name=os.path.basename(gradecard))
+                st.download_button(
+                    "📄 Download Gradecard",
+                    f,
+                    file_name=os.path.basename(gradecard)
+                )
+        else:
+            st.warning("Gradecard not available")
 
     with col2:
         if os.path.exists(certificate):
             with open(certificate, "rb") as f:
-                st.download_button("🏆 Certificate", f, file_name=os.path.basename(certificate))
+                st.download_button(
+                    "🏆 Download Certificate",
+                    f,
+                    file_name=os.path.basename(certificate)
+                )
+        else:
+            st.warning("Certificate not available")
 
-    st.subheader("📂 Document Status")
-
-    status = pd.DataFrame([
-        {"Document": "Gradecard", "Status": "✅ Available" if os.path.exists(gradecard) else "❌ Missing"},
-        {"Document": "Certificate", "Status": "✅ Available" if os.path.exists(certificate) else "❌ Missing"}
-    ])
-
-    st.table(status)
-elif page == "⚙ Settings":
-
-    st.title("⚙ Settings Panel")
-
-    
-
-    # ================= THEME SWITCH =================
-    st.subheader("🎨 Theme Settings")
-
-    theme = st.selectbox("Choose Theme", ["Light", "Dark"])
-
-    if theme == "Dark":
-        st.markdown(
-            """
-            <style>
-            body { background-color: #0e1117; color: white; }
-            </style>
-            """,
-            unsafe_allow_html=True
-        )
-        st.success("Dark theme applied")
-
-    else:
-        st.success("Light theme active")
-
-    st.markdown("---")
-
-    
-
-    # ================= LOGOUT =================
-    st.subheader("🚪 Logout")
-
-    if st.button("Logout Now"):
-        st.session_state.login = False
-        st.session_state.student = None
-
-        st.success("Logged out successfully!")
-
-        st.rerun()    
-elif page == "🤖 AI Assistant":
-    st.subheader("🤖 AI Insights")
-
-    rank = student["Rank"]
-    cgpa = student["CGPA"]
-    attendance = student["Attendance_%"]
-
-    if rank == 1:
-        st.success("🔥 You are College Topper — maintain consistency")
-    elif rank <= 3:
-        st.info("⭐ You are in Top 3 — push for Rank 1")
-    elif cgpa < 7:
-        st.warning("📉 Improve CGPA for better placement chances")
-    elif attendance < 75:
-        st.error("⚠ Attendance is low — risk of eligibility issue")
-    else:
-        st.success("✅ Performance is stable — keep improving")
-
-    st.markdown("---")
-elif page == "👤 Profile":
-    st.subheader("👤 Profile Overview")
-
-    st.write("Name:", student["Name"])
-    st.write("Email:", student["Email"])
-    st.write("Grade:", student["Grade"])
-    st.write("Rank:", student["Rank"])
-    st.write("CGPA:", student["CGPA"])
-    st.markdown("---")
-
+# ================= ATTENDANCE =================
 elif page == "📌 Attendance":
 
     st.title("📌 QR Attendance")
-
-    st.info("Admin ERP se generated QR scan karo. Ek student ek QR se sirf ek baar attendance laga sakta hai.")
 
     student_data = {
         "name": str(student["Name"]),
@@ -429,17 +318,16 @@ elif page == "📌 Attendance":
     st.success(f"Logged in as: {student_data['name']}")
 
     st.markdown("---")
-
     st.subheader("📷 Scan QR Code")
 
     try:
         qr_token = qrcode_scanner(key="student_qr_scanner")
     except Exception as e:
         qr_token = None
-        st.warning("Camera scanner open nahi ho raha. Please token manually paste karo.")
+        st.warning("Camera scanner not working. Please paste token manually.")
         st.caption(str(e))
 
-    manual_token = st.text_input("QR scan na ho to token paste karo")
+    manual_token = st.text_input("Paste QR Token Manually")
 
     token = qr_token or manual_token
 
@@ -469,7 +357,6 @@ elif page == "📌 Attendance":
                 st.warning("⚠️ " + msg)
 
     st.markdown("---")
-
     st.subheader("📊 My Attendance Records")
 
     records = (
@@ -494,10 +381,16 @@ elif page == "📌 Attendance":
     else:
         st.info("No attendance records found.")
 
-elif page == "🧠 Academic Mentor Agent":
+# ================= QUIZ CENTER =================
+elif page == "📝 Quiz Center":
+
+    quiz_student_panel(db, student)
+
+# ================= AI ACADEMIC MENTOR =================
+elif page == "🧠 AI Academic Mentor":
 
     st.title("🧠 Personal Academic Mentor Agent")
-    st.info("Ask anything. This AI reads your real scorecard and gives personalized guidance.")
+    st.info("Ask anything. This AI reads your scorecard and quiz history.")
 
     if gemini_client is None:
         st.error("Gemini API key not configured.")
@@ -506,7 +399,6 @@ elif page == "🧠 Academic Mentor Agent":
     if "mentor_chat" not in st.session_state:
         st.session_state.mentor_chat = []
 
-    # ================= STUDENT SCORECARD CONTEXT =================
     marks_cols = [c for c in df.columns if "_Marks" in c]
 
     module_details = ""
@@ -516,6 +408,11 @@ elif page == "🧠 Academic Mentor Agent":
             module_details += f"{c}: {student[c]}\n"
         except:
             pass
+
+    quiz_context = build_student_quiz_context(
+        db,
+        str(student["Email"]).strip().lower()
+    )
 
     student_context = f"""
 You are an AI Academic Mentor for LIET Student ERP.
@@ -532,16 +429,22 @@ Attendance: {student['Attendance_%']}%
 Module Scores:
 {module_details}
 
+Quiz Data:
+{quiz_context}
+
 Rules:
 - Answer personally for this student only.
-- Use student's actual scorecard.
-- Give practical improvement steps.
-- If student asks about rank, predict realistically.
-- If student asks about weak subject, identify from module scores.
-- If student asks study plan, create day-wise plan.
+- Use student's scorecard and quiz history.
+- If student asks weak topic, use quiz wrong-answer data.
+- If student asks improvement, give topic-wise plan.
+- If student asks why marks are low, explain using quiz attempts.
 - Keep tone friendly, motivational, and clear.
 - Do not give generic answer.
 """
+
+    for role, msg in st.session_state.mentor_chat:
+        with st.chat_message(role):
+            st.write(msg)
 
     user_question = st.chat_input("Ask your academic mentor...")
 
@@ -559,7 +462,7 @@ Student Question:
 {user_question}
 """
 
-        with st.spinner("Mentor is analyzing your scorecard..."):
+        with st.spinner("Mentor is analyzing your scorecard and quiz history..."):
             try:
                 response = gemini_client.models.generate_content(
                     model="models/gemini-2.5-flash",
@@ -570,11 +473,50 @@ Student Question:
                 answer = f"Error: {e}"
 
         st.session_state.mentor_chat.append(("assistant", answer))
+        st.rerun()
+elif page == "🔔 Notifications":
+    student_notification_panel(db, student)
+                                
+elif page == "📈 Academic Journey":
+    academic_journey_panel(db, student)
+elif page == "🏅 Achievements":
+    gamification_panel(db, student)    
+# ================= SETTINGS =================
+elif page == "⚙ Settings":
 
-    for role, msg in st.session_state.mentor_chat:
-        if role == "user":
-            with st.chat_message("user"):
-                st.write(msg)
-        else:
-            with st.chat_message("assistant"):
-                st.write(msg)        
+    st.title("⚙ Settings Panel")
+
+    st.subheader("🎨 Theme Settings")
+
+    theme = st.selectbox("Choose Theme", ["Light", "Dark"])
+
+    if theme == "Dark":
+        st.markdown(
+            """
+            <style>
+            body { background-color: #0e1117; color: white; }
+            </style>
+            """,
+            unsafe_allow_html=True
+        )
+        st.success("Dark theme applied")
+    else:
+        st.success("Light theme active")
+
+    st.markdown("---")
+
+    st.subheader("🚪 Logout")
+
+    if st.button("Logout Now"):
+        st.session_state.login = False
+        st.session_state.student = None
+        st.success("Logged out successfully!")
+        st.rerun()
+
+# ================= SIDEBAR LOGOUT =================
+st.sidebar.markdown("---")
+
+if st.sidebar.button("🚪 Logout"):
+    st.session_state.login = False
+    st.session_state.student = None
+    st.rerun()

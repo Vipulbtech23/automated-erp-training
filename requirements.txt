@@ -7,16 +7,13 @@ plotly
 pillow
 google-generativeai
 reportlab
-<<<<<<< HEAD
-=======
 qrcode
 opencv-python
 pyzbar
-firebase-admin
+firebase_admin
 qrcode
 pillow
 streamlit-qrcode-scanner
 watchdog
 google-genai
 scipy
->>>>>>> 83049b9 (Updated LIET ERP features)
