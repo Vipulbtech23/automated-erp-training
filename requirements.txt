@@ -17,3 +17,5 @@ streamlit-qrcode-scanner
 watchdog
 google-genai
 scipy
+pyttsx3
+gTTS

@@ -1,138 +1,328 @@
 import pandas as pd
 from scipy.stats import percentileofscore
+import re
+import os
 
-print("SCRIPT STARTED")
+print("🚀 CALCULATE SCORES SCRIPT STARTED")
 
-# ================= LOAD =================
-master = pd.read_excel("output/master_performance.xlsx")
+# ================= FILE PATH =================
+input_file = "output/master_performance.xlsx"
+output_file = "output/final_rankings.xlsx"
 
-# ================= CLEAN COLUMNS =================
-master.columns = master.columns.str.strip()
+# ================= CHECK INPUT FILE =================
+if not os.path.exists(input_file):
+    raise FileNotFoundError(
+        f"❌ File not found: {input_file}\n"
+        "Pehle merge_quizzes.py run karo."
+    )
 
-# ================= QUIZ COLUMNS =================
-quiz_cols = [
-    c for c in master.columns
-    if c not in ["Email", "Name"]
+# ================= LOAD DATA =================
+master = pd.read_excel(input_file)
+
+# ================= CLEAN COLUMN NAMES =================
+master.columns = (
+    master.columns
+    .astype(str)
+    .str.strip()
+)
+
+print("\nColumns Found:")
+print(master.columns.tolist())
+
+# ================= REQUIRED STUDENT COLUMNS =================
+required_student_cols = [
+    "Email",
+    "Name"
 ]
 
-print("\nQuiz Columns Found:")
-print(quiz_cols)
+for column in required_student_cols:
+    if column not in master.columns:
+        raise ValueError(
+            f"❌ Required column '{column}' master file mein nahi mili."
+        )
 
-# ================= EXTRACT MARKS =================
-for c in quiz_cols:
+# Roll No missing ho to create kar do
+if "Roll No" not in master.columns:
+    print("⚠️ Roll No column nahi mili. Blank column create ki gayi.")
+    master["Roll No"] = ""
 
-    master[c + "_Marks"] = (
-        master[c]
-        .astype(str)
-        .str.extract(r"(\d+\.?\d*)")[0]
+# ================= CLEAN STUDENT DATA =================
+master["Email"] = (
+    master["Email"]
+    .fillna("")
+    .astype(str)
+    .str.strip()
+    .str.lower()
+)
+
+master["Name"] = (
+    master["Name"]
+    .fillna("")
+    .astype(str)
+    .str.strip()
+)
+
+master["Roll No"] = (
+    master["Roll No"]
+    .fillna("")
+    .astype(str)
+    .str.strip()
+    .replace({
+        "nan": "",
+        "None": "",
+        "none": ""
+    })
+)
+
+# ================= ASSESSMENT COLUMNS =================
+# Sirf Assessment1 se Assessment20 columns select honge
+
+assessment_cols = []
+
+for number in range(1, 21):
+
+    column_name = f"Assessment{number}"
+
+    if column_name in master.columns:
+        assessment_cols.append(column_name)
+
+print("\nAssessment Columns Found:")
+print(assessment_cols)
+
+if len(assessment_cols) == 0:
+    raise ValueError(
+        "❌ Assessment1 se Assessment20 tak koi assessment column nahi mila."
     )
 
-    master[c + "_Marks"] = pd.to_numeric(
-        master[c + "_Marks"],
-        errors="coerce"
-    ).fillna(0)
+# Missing assessment columns information
+missing_assessments = [
+    f"Assessment{number}"
+    for number in range(1, 21)
+    if f"Assessment{number}" not in master.columns
+]
 
-# ================= MARKS COLUMNS =================
-marks_cols = [c + "_Marks" for c in quiz_cols]
+if missing_assessments:
+    print("\n⚠️ Missing Assessment Columns:")
+    print(missing_assessments)
 
-# ================= TOTAL =================
-master["Total"] = master[marks_cols].sum(axis=1)
+print(
+    f"\n✅ Total Assessments Found: {len(assessment_cols)}"
+)
 
-# ================= MAX MARKS =================
-max_total = 0
+# ================= SCORE EXTRACTION FUNCTION =================
+def extract_obtained_marks(value):
 
-for c in quiz_cols:
+    if pd.isna(value):
+        return 0.0
 
-    max_marks = (
-        master[c]
-        .astype(str)
-        .str.extract(r"/\s*(\d+\.?\d*)")[0]
+    text = str(value).strip()
+
+    if text == "":
+        return 0.0
+
+    if "absent" in text.lower():
+        return 0.0
+
+    # Examples handled:
+    # 10
+    # 10.5
+    # 10/15
+    # 10 / 15
+    # Score: 10/15
+
+    match = re.search(
+        r"(\d+(?:\.\d+)?)",
+        text
     )
 
-    max_marks = pd.to_numeric(
-        max_marks,
-        errors="coerce"
+    if match:
+        return float(match.group(1))
+
+    return 0.0
+
+
+# ================= MAX MARKS EXTRACTION =================
+def extract_max_marks(series):
+
+    # First try formats such as 10/15
+    for value in series:
+
+        if pd.isna(value):
+            continue
+
+        text = str(value).strip()
+
+        match = re.search(
+            r"/\s*(\d+(?:\.\d+)?)",
+            text
+        )
+
+        if match:
+            return float(match.group(1))
+
+    # Default maximum marks per assessment
+    return 15.0
+
+
+# ================= CREATE MARKS COLUMNS =================
+marks_cols = []
+
+assessment_max_marks = {}
+
+for assessment in assessment_cols:
+
+    marks_column = f"{assessment}_Marks"
+
+    master[marks_column] = master[assessment].apply(
+        extract_obtained_marks
     )
 
-    if max_marks.notna().any():
-        max_total += max_marks.dropna().iloc[0]
+    marks_cols.append(marks_column)
 
-# fallback
-if max_total == 0:
-    max_total = len(quiz_cols) * 15
+    max_marks = extract_max_marks(
+        master[assessment]
+    )
 
-print("\nMaximum Marks =", max_total)
+    assessment_max_marks[assessment] = max_marks
 
-# Save for gradecard
+    print(
+        f"{assessment}: Maximum Marks = {max_marks}"
+    )
+
+# ================= TOTAL OBTAINED MARKS =================
+master["Total"] = (
+    master[marks_cols]
+    .sum(axis=1)
+    .round(2)
+)
+
+# ================= TOTAL MAXIMUM MARKS =================
+max_total = sum(
+    assessment_max_marks.values()
+)
+
+print(
+    f"\n✅ Total Maximum Marks = {max_total}"
+)
+
 master["Max_Marks"] = max_total
 
 # ================= PERCENTAGE =================
-master["Percentage"] = round(
-    (master["Total"] / max_total) * 100,
-    2
+if max_total > 0:
+
+    master["Percentage"] = (
+        (master["Total"] / max_total) * 100
+    ).round(2)
+
+else:
+
+    master["Percentage"] = 0.0
+
+# Percentage maximum 100 rakho
+master["Percentage"] = master["Percentage"].clip(
+    lower=0,
+    upper=100
 )
 
-# ================= ATTENDANCE =================
-master["Present_Quizzes"] = (
-    master[quiz_cols]
-    .astype(str)
+# ================= ATTENDANCE FUNCTION =================
+def is_present(value):
+
+    if pd.isna(value):
+        return False
+
+    text = str(value).strip().lower()
+
+    if text == "":
+        return False
+
+    if text in [
+        "absent",
+        "nan",
+        "none",
+        "na",
+        "n/a"
+    ]:
+        return False
+
+    return True
+
+
+# ================= PRESENT ASSESSMENTS =================
+master["Present_Assessments"] = (
+    master[assessment_cols]
     .apply(
-        lambda x: ~x.str.contains(
-            "Absent",
-            case=False,
-            na=False
-        )
+        lambda row: sum(
+            is_present(value)
+            for value in row
+        ),
+        axis=1
     )
-    .sum(axis=1)
 )
 
-master["Absent_Quizzes"] = (
-    len(quiz_cols)
-    - master["Present_Quizzes"]
+# ================= ABSENT ASSESSMENTS =================
+master["Absent_Assessments"] = (
+    len(assessment_cols)
+    - master["Present_Assessments"]
 )
 
-master["Attendance_%"] = round(
-    (master["Present_Quizzes"] / len(quiz_cols)) * 100,
-    2
-)
+# ================= ATTENDANCE PERCENTAGE =================
+master["Attendance_%"] = (
+    (
+        master["Present_Assessments"]
+        / len(assessment_cols)
+    ) * 100
+).round(2)
 
 # ================= PERCENTILE =================
-master["Percentile"] = master["Total"].apply(
-    lambda x: percentileofscore(
-        master["Total"],
-        x,
-        kind="rank"
-    )
-)
+if len(master) > 0:
 
-master["Percentile"] = round(
-    master["Percentile"],
-    2
-)
+    total_scores = master["Total"].tolist()
+
+    master["Percentile"] = master["Total"].apply(
+        lambda score: percentileofscore(
+            total_scores,
+            score,
+            kind="rank"
+        )
+    ).round(2)
+
+else:
+
+    master["Percentile"] = 0.0
 
 # ================= CGPA =================
-master["CGPA"] = round(
-    (master["Percentage"] / 100) * 10,
-    2
-)
+master["CGPA"] = (
+    master["Percentage"] / 10
+).round(2)
 
-# ================= GRADE =================
-def grade(p):
+# ================= GRADE FUNCTION =================
+def calculate_grade(percentage):
 
-    if p >= 90:
+    if percentage >= 90:
         return "A+"
-    elif p >= 80:
+
+    elif percentage >= 80:
         return "A"
-    elif p >= 70:
+
+    elif percentage >= 70:
+        return "B+"
+
+    elif percentage >= 60:
         return "B"
-    elif p >= 60:
+
+    elif percentage >= 50:
         return "C"
-    elif p >= 50:
+
+    elif percentage >= 40:
         return "D"
+
     else:
         return "F"
 
-master["Grade"] = master["Percentage"].apply(grade)
+
+master["Grade"] = master["Percentage"].apply(
+    calculate_grade
+)
 
 # ================= RANK =================
 master["Rank"] = (
@@ -145,47 +335,86 @@ master["Rank"] = (
 )
 
 # ================= VERIFICATION ID =================
+# Rank ke according pehle sort karenge
+master = master.sort_values(
+    by=[
+        "Rank",
+        "Name"
+    ],
+    ascending=[
+        True,
+        True
+    ]
+).reset_index(drop=True)
+
 master["Verification_ID"] = [
-    f"LIET-MLAI-{str(i+1).zfill(3)}"
-    for i in range(len(master))
+    f"LIET-MLAI-{str(index + 1).zfill(3)}"
+    for index in range(len(master))
 ]
 
-# ================= SUGGESTION =================
-def get_suggestion(rank, percentage):
+# ================= PERFORMANCE SUGGESTION =================
+def get_suggestion(rank, percentage, attendance):
 
     total_students = len(master)
 
-    top10 = max(1, int(total_students * 0.10))
-    top30 = max(1, int(total_students * 0.30))
+    top_10_percent = max(
+        1,
+        round(total_students * 0.10)
+    )
 
-    if rank <= top10:
+    top_30_percent = max(
+        1,
+        round(total_students * 0.30)
+    )
+
+    if attendance < 50:
+
         return (
-            "Outstanding Performance. "
-            "Excellent leadership and technical skills."
+            "Low attendance. Attend assessments regularly "
+            "and focus on completing missed evaluations."
         )
 
-    elif rank <= top30:
+    elif rank <= top_10_percent:
+
         return (
-            "Very Good Performance. "
-            "Continue working on advanced concepts."
+            "Outstanding Performance. Excellent technical "
+            "understanding and consistent assessment results."
+        )
+
+    elif rank <= top_30_percent:
+
+        return (
+            "Very Good Performance. Continue practicing "
+            "advanced concepts and practical implementation."
         )
 
     elif percentage >= 60:
+
         return (
-            "Good Progress. "
-            "Improve consistency and practical implementation."
+            "Good Progress. Improve consistency, revision "
+            "and practical problem-solving skills."
+        )
+
+    elif percentage >= 40:
+
+        return (
+            "Average Performance. Focus on weak assessments "
+            "and practise concepts regularly."
         )
 
     else:
+
         return (
-            "Needs Improvement. "
-            "Focus on revision and regular practice."
+            "Needs Improvement. Revise fundamental concepts, "
+            "complete missed assessments and practise daily."
         )
 
+
 master["Suggestion"] = master.apply(
-    lambda x: get_suggestion(
-        x["Rank"],
-        x["Percentage"]
+    lambda row: get_suggestion(
+        row["Rank"],
+        row["Percentage"],
+        row["Attendance_%"]
     ),
     axis=1
 )
@@ -193,11 +422,14 @@ master["Suggestion"] = master.apply(
 # ================= FINAL COLUMN ORDER =================
 final_cols = [
     "Email",
-    "Name"
+    "Name",
+    "Roll No"
 ]
 
+# Assessment marks
 final_cols.extend(marks_cols)
 
+# Performance columns
 final_cols.extend([
     "Total",
     "Max_Marks",
@@ -208,24 +440,37 @@ final_cols.extend([
     "Grade",
     "Verification_ID",
     "Suggestion",
-    "Present_Quizzes",
-    "Absent_Quizzes",
+    "Present_Assessments",
+    "Absent_Assessments",
     "Attendance_%"
 ])
 
 master = master[final_cols]
 
-# ================= SAVE =================
+# ================= OUTPUT FOLDER =================
+os.makedirs(
+    "output",
+    exist_ok=True
+)
+
+# ================= SAVE FINAL FILE =================
 master.to_excel(
-    "output/final_rankings.xlsx",
+    output_file,
     index=False
 )
 
-print("\nSUCCESS")
-print("Created: output/final_rankings.xlsx")
+# ================= FINAL RESULT =================
+print("\n" + "=" * 70)
+print("✅ SCORE CALCULATION COMPLETED SUCCESSFULLY")
+print(f"✅ Created: {output_file}")
+print(f"✅ Total Students: {len(master)}")
+print(f"✅ Assessments Processed: {len(assessment_cols)}")
+print(f"✅ Total Maximum Marks: {max_total}")
 
 print("\nFinal Columns:")
 print(master.columns.tolist())
 
 print("\nPreview:")
 print(master.head())
+
+print("=" * 70)
