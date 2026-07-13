@@ -30,7 +30,7 @@ STUDENT_PORTAL_URL = (
     "https://automated-erp-training-student.streamlit.app/"
 )
 
-LIET_WEBSITE_URL = "https://automated-erp-training-home.streamlit.app/"
+LIET_WEBSITE_URL = "https://automated-erp-training-landingpage1.streamlit.app/"
 
 DEFAULT_PASSWORD = "Lloyd@2025"
 
